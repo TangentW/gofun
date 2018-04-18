@@ -1,5 +1,7 @@
 package fun
 
+import "sync"
+
 // Event
 type Event int
 
@@ -48,7 +50,7 @@ func (handler *Handler) HandleNext(next func(interface{})) {
 	handler.HandleEvents(next, nil)
 }
 
-func (handler *Handler) Output(output chan<- interface{}) {
+func (handler *Handler) utput(output chan<- interface{}) {
   handler.HandleNext(func(value interface{}) {
     output <- value
   })
@@ -62,6 +64,7 @@ func (handler *Handler) HandleError(err func(error)) {
 type Fun struct {
 	init func(Handler)
 	handlers []Handler
+	lock sync.Mutex
 }
 
 func New(init func(Handler)) *Fun {
@@ -74,6 +77,9 @@ func (fun *Fun) activateIfNeeds() {
   if fun.init == nil { return }
   fun.init(Handler{
     func(event Event, value interface{}) {
+      fun.lock.Lock()
+      defer fun.lock.Unlock()
+
       for _, handler := range fun.handlers {
         handler.handler(event, value)
       }
@@ -83,6 +89,9 @@ func (fun *Fun) activateIfNeeds() {
 }
 
 func (fun *Fun) Subscribe(handler Handler) {
+  fun.lock.Lock()
+  defer fun.lock.Unlock()
+
   fun.handlers = append(fun.handlers, handler)
   fun.activateIfNeeds()
 }
