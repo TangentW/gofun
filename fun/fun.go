@@ -1,18 +1,11 @@
 package fun
 
-/*
-import (
-  "fmt"
-)
-*/
-
 // Event
 type Event int
 
 const (
-	Next Event = iota
-	Completed
-	Error
+	EventNext Event = iota
+	EventError
 )
 
 // handler
@@ -22,15 +15,11 @@ type Handler struct {
 
 // Send Value
 func (handler Handler) SendNext(v interface{}) {
-	handler.handler(Next, v)
-}
-
-func (handler Handler) SendCompleted() {
-	handler.handler(Completed, nil)
+	handler.handler(EventNext, v)
 }
 
 func (handler Handler) SendError(err error) {
-	handler.handler(Error, err)
+	handler.handler(EventError, err)
 }
 
 // Handle
@@ -38,20 +27,15 @@ func (handler *Handler) Handle(todo func(event Event, value interface{})) {
 	handler.handler = todo
 }
 
-func (handler *Handler) HandleEvents(next func(interface{}), completed func(), err func(error)) {
+func (handler *Handler) HandleEvents(next func(interface{}), err func(error)) {
 	handler.Handle(func(event Event, value interface{}) {
 		switch event {
-		case Next:
+		case EventNext:
 			if next == nil {
 				break
 			}
 			next(value)
-		case Completed:
-			if completed == nil {
-				break
-			}
-			completed()
-		case Error:
+		case EventError:
 			if err == nil {
 				break
 			}
@@ -61,15 +45,17 @@ func (handler *Handler) HandleEvents(next func(interface{}), completed func(), e
 }
 
 func (handler *Handler) HandleNext(next func(interface{})) {
-	handler.HandleEvents(next, nil, nil)
+	handler.HandleEvents(next, nil)
 }
 
-func (handler *Handler) HandleCompleted(completed func()) {
-	handler.HandleEvents(nil, completed, nil)
+func (handler *Handler) Output(output chan<- interface{}) {
+  handler.HandleNext(func(value interface{}) {
+    output <- value
+  })
 }
 
 func (handler *Handler) HandleError(err func(error)) {
-	handler.HandleEvents(nil, nil, err)
+	handler.HandleEvents(nil, err)
 }
 
 // Fun
@@ -78,7 +64,7 @@ type Fun struct {
 	handlers []Handler
 }
 
-func MakeFun(init func(Handler)) *Fun {
+func New(init func(Handler)) *Fun {
   fun := new(Fun)
   fun.init = init
   return fun
@@ -107,10 +93,10 @@ func (fun *Fun) SubscribeNext(next func(interface{})) {
   fun.Subscribe(handler)
 }
 
-func (fun *Fun) SubscribeCompleted(completed func()) {
-  var handler Handler
-  handler.HandleCompleted(completed)
-  fun.Subscribe(handler)
+func (fun *Fun) Output(output chan<- interface{}) {
+  fun.SubscribeNext(func(value interface{}) {
+    output <- value
+  })
 }
 
 func (fun *Fun) SubscribeError(err func(error)) {
@@ -119,46 +105,63 @@ func (fun *Fun) SubscribeError(err func(error)) {
   fun.Subscribe(handler)
 }
 
-// Transform
 // Monad
-func RetFun(value interface{}) *Fun {
-  return MakeFun(func(handler Handler) { handler.SendNext(value) })
+func Return(value interface{}) *Fun {
+  return New(func(handler Handler) { handler.SendNext(value) })
+}
+
+func Error(err error) *Fun {
+  return New(func(handler Handler) { handler.SendError(err) })
+}
+
+func Never() *Fun {
+  return New(func(handler Handler) { })
+}
+
+func List(elements ...interface{}) *Fun {
+  return New(func(handler Handler) {
+    for _, element := range elements {
+      handler.SendNext(element)
+    }
+  })
 }
 
 func (fun *Fun) Bind(mapper func(interface{}) *Fun) *Fun {
-  ret := MakeFun(func(handler Handler) {
-    h := Handler{
+  ret := New(func(handler Handler) {
+    fun.Subscribe(Handler{
       func(event Event, value interface{}) {
         switch event {
-        case Next: 
-          hi := Handler{
-            func(event Event, value interface{}) {
-              switch event {
-              case Next:
-                handler.SendNext(value)
-              case Completed:
-                handler.SendCompleted()
-              case Error:
-                handler.SendError(value.(error))
-              }
-            },
-          }
-          mapper(value).Subscribe(hi)
-        case Completed:
-          handler.SendCompleted()
-        case Error:
+        case EventNext: 
+          mapper(value).Subscribe(handler)
+        case EventError:
           handler.SendError(value.(error))
         }
       },
-    }
-    fun.Subscribe(h)
+    })
   })
   return ret
 }
 
 func (fun *Fun) Map(mapper func(interface{}) interface{}) *Fun {
   return fun.Bind(func(value interface{}) *Fun {
-    return RetFun(mapper(value))
+    return Return(mapper(value))
+  })
+}
+
+func (fun *Fun) Filter(predicate func(interface{}) bool) *Fun {
+  return fun.Bind(func(value interface{}) *Fun {
+    if predicate(value) {
+      return Return(value)
+    } else {
+      return Never()
+    }
+  })
+}
+
+func (fun *Fun) Do(todo func(interface{})) *Fun {
+  return fun.Bind(func(value interface{}) *Fun {
+    todo(value)
+    return Return(value)
   })
 }
 
