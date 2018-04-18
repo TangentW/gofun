@@ -4,19 +4,44 @@ FP(Functional-Programming) API for Go.
 # Usage
 
 ```Go
-import "fun"
+import (
+  "fmt"
+  "bufio"
+  "os"
+  "./fun"
+)
 
-fun.MakeFun(func(handler fun.Handler) {
+type person struct {
+  name string
+}
+
+func (p person) String() string {
+  return fmt.Sprintf("Hello, my name is %s", p.name)
+}
+
+func main() {
+  events := make(chan interface{})
+
+  go obtainInput(events)
+
+  for {
+    select {
+    case p := <-events:
+      fmt.Println(p.(person))
+    }
+  }
+}
+
+func obtainInput(output chan<- interface{}) {
+  fun.New(func(handler fun.Handler) {
     input := bufio.NewScanner(os.Stdin)
     for input.Scan() {
-      text := input.Text()
-      handler.SendNext(text)
+      handler.SendNext(input.Text())
     }
-	}).Map(func(value interface{}) interface{} {
-	  return person{
-	    value.(string),
-	  }
-	}).SubscribeNext(func(next interface{}) {
-	  fmt.Println(next.(person))
-	})
+  }).Map(func(value interface{}) interface{} {
+    return person{
+      name: value.(string),
+    }
+  }).Output(output)
+}
 ```
